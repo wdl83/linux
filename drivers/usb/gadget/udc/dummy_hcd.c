@@ -1435,15 +1435,16 @@ top:
 			if (len == 0)
 				break;
 
-			/* send multiple of maxpacket first, then remainder */
-			if (len >= ep->ep.maxpacket) {
-				is_short = 0;
-				if (len % ep->ep.maxpacket)
-					rescan = 1;
-				len -= len % ep->ep.maxpacket;
-			} else {
-				is_short = 1;
-			}
+            /* send multiple of maxpacket first, then remainder */
+            if (len >= ep->ep.maxpacket) {
+                is_short = 0;
+                if (len % ep->ep.maxpacket)
+                    rescan = 1;
+                if (usb_pipetype(urb->pipe) != PIPE_ISOCHRONOUS)
+                    len -= len % ep->ep.maxpacket;
+            } else {
+                is_short = 1;
+            }
 
 			len = dummy_perform_transfer(urb, req, len);
 
@@ -1456,7 +1457,7 @@ top:
 				urb->actual_length += len;
 				req->req.actual += len;
 				if (usb_pipetype(urb->pipe) == PIPE_ISOCHRONOUS) {
-					if (count <= urb->number_of_packets) {
+					if (count < urb->number_of_packets) {
 						urb->iso_frame_desc[count].actual_length = len;
 						urb->iso_frame_desc[count].status = 0;
 						count++;
