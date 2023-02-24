@@ -1325,7 +1325,7 @@ static int dummy_urb_dequeue(struct usb_hcd *hcd, struct urb *urb, int status)
 }
 
 static int dummy_perform_transfer(struct urb *urb, struct dummy_request *req,
-		u32 len)
+		u32 len, int padding)
 {
 	void *ubuf, *rbuf;
 	struct urbp *urbp = urb->hcpriv;
@@ -1340,12 +1340,18 @@ static int dummy_perform_transfer(struct urb *urb, struct dummy_request *req,
 
 	if (!urb->num_sgs) {
 		ubuf = urb->transfer_buffer + urb->actual_length;
-		if (to_host)
+		if (to_host) {
 			memcpy(ubuf, rbuf, len);
-		else
+			memset(ubuf + len, 0, padding);
+		}
+		else {
 			memcpy(rbuf, ubuf, len);
-		return len;
+			memset(rbuf + len, 0, padding);
+		}
+		return len + padding;
 	}
+	else if(padding)
+		return -EINVAL;
 
 	if (!urbp->miter_started) {
 		u32 flags = SG_MITER_ATOMIC;
@@ -1398,11 +1404,12 @@ static int transfer(struct dummy_hcd *dum_hcd, struct urb *urb,
 	struct dummy_request	*req;
 	int			sent = 0;
 	int			count = 0;
+	const int		is_isoc = usb_pipetype(urb->pipe) == PIPE_ISOCHRONOUS;
 
 top:
 	/* if there's no request queued, the device is NAKing; return */
 	list_for_each_entry(req, &ep->queue, queue) {
-		unsigned	host_len, dev_len, len;
+		unsigned	host_len, dev_len, len, padding;
 		int		is_short, to_host;
 		int		rescan = 0;
 
@@ -1440,13 +1447,17 @@ top:
 				is_short = 0;
 				if (len % ep->ep.maxpacket)
 					rescan = 1;
-				if (usb_pipetype(urb->pipe) != PIPE_ISOCHRONOUS)
+				if (!is_isoc)
 					len -= len % ep->ep.maxpacket;
 			} else {
 				is_short = 1;
 			}
 
-			len = dummy_perform_transfer(urb, req, len);
+			padding = is_isoc && count < urb->number_of_packets &&
+				urb->iso_frame_desc[count].length > len
+				? urb->iso_frame_desc[count].length - len : 0u;
+
+			len = dummy_perform_transfer(urb, req, len, padding);
 
 			ep->last_io = jiffies;
 			if ((int)len < 0) {
@@ -1455,13 +1466,11 @@ top:
 				limit -= len;
 				sent += len;
 				urb->actual_length += len;
-				req->req.actual += len;
-				if (usb_pipetype(urb->pipe) == PIPE_ISOCHRONOUS) {
-					if (count < urb->number_of_packets) {
-						urb->iso_frame_desc[count].actual_length = len;
-						urb->iso_frame_desc[count].status = 0;
-						count++;
-					}
+				req->req.actual += len - padding;
+				if (is_isoc && count < urb->number_of_packets) {
+					urb->iso_frame_desc[count].actual_length = len - padding;
+					urb->iso_frame_desc[count].status = 0;
+					count++;
 				}
 			}
 		}
@@ -1532,12 +1541,10 @@ top:
 			goto top;
 	}
 
-	if (usb_pipetype(urb->pipe) == PIPE_ISOCHRONOUS) {
-		int i;
-
-		for (i = count; i < urb->number_of_packets; ++i) {
-			urb->iso_frame_desc[i].actual_length = 0;
-			urb->iso_frame_desc[i].status = 0;
+	if (is_isoc) {
+		for (; count < urb->number_of_packets; ++count) {
+			urb->iso_frame_desc[count].actual_length = 0;
+			urb->iso_frame_desc[count].status = 0;
 		}
 		*status = 0;
 	}
