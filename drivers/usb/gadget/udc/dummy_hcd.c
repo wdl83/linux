@@ -137,7 +137,7 @@ static const struct {
 	}
 
 /* we don't provide isochronous endpoints since we don't support them */
-#define TYPE_BULK_OR_INT_ISO \
+#define TYPE_BULK_OR_INT_OR_ISO \
 	(USB_EP_CAPS_TYPE_BULK | USB_EP_CAPS_TYPE_INT | USB_EP_CAPS_TYPE_ISO)
 
 	/* everyone has ep0 */
